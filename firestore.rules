@@ -21,17 +21,26 @@ service cloud.firestore {
     }
 
     // Camps collection
-    // Stores active blood donation camp sessions
+    // Stores blood donation camp sessions (active and inactive)
     match /camps/{campId} {
       // Anyone authenticated can read active camps
-      allow read: if request.auth != null && resource.data.status == 'active';
+      // Coordinators can read their own inactive camps (for history)
+      allow read: if request.auth != null && (
+        resource.data.status == 'active' ||
+        (resource.data.status == 'inactive' && resource.data.coordinator_uid == request.auth.uid)
+      );
 
       // Only authenticated coordinators can create camps
       allow create: if request.auth != null
         && request.resource.data.coordinator_uid == request.auth.uid;
 
-      // Only the coordinator who created the camp can update or delete it
-      allow update, delete: if request.auth != null
+      // Only the coordinator who created the camp can update it
+      // (Updates used for inventory changes and ending camp)
+      allow update: if request.auth != null
+        && resource.data.coordinator_uid == request.auth.uid;
+
+      // Only the coordinator who created the camp can delete it
+      allow delete: if request.auth != null
         && resource.data.coordinator_uid == request.auth.uid;
     }
 
@@ -47,8 +56,35 @@ service cloud.firestore {
       // Only authenticated users can update request status
       allow update: if request.auth != null;
 
-      // Prevent deletion (set to true if needed)
-      allow delete: if false;
+      // Only the user who created the request can delete it
+      allow delete: if request.auth != null
+        && resource.data.requested_by == request.auth.uid;
+    }
+
+    // Donors collection
+    // Stores donor information for each blood donation
+    match /donors/{donorId} {
+      // Authenticated users can read all donor records
+      allow read: if request.auth != null;
+
+      // Only authenticated users can create donor records
+      // The camp_id must reference an existing active camp
+      allow create: if request.auth != null
+        && request.resource.data.camp_id != null
+        && request.resource.data.donor_id != null
+        && request.resource.data.contact != null
+        && request.resource.data.blood_type != null
+        && request.resource.data.units != null;
+
+      // Only the coordinator of the associated camp can update donor records
+      allow update: if request.auth != null
+        && exists(/databases/$(database)/documents/camps/$(resource.data.camp_id))
+        && get(/databases/$(database)/documents/camps/$(resource.data.camp_id)).data.coordinator_uid == request.auth.uid;
+
+      // Only the coordinator of the associated camp can delete donor records
+      allow delete: if request.auth != null
+        && exists(/databases/$(database)/documents/camps/$(resource.data.camp_id))
+        && get(/databases/$(database)/documents/camps/$(resource.data.camp_id)).data.coordinator_uid == request.auth.uid;
     }
   }
 }
